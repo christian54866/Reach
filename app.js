@@ -1,7 +1,7 @@
 // --- CONFIGURATION ---
-const GEMINI_API_KEY = "GEMINI_KEY_HERE";
-const ELEVENLABS_API_KEY = "ELEVENLABS_KEY_HERE";
-const ELEVENLABS_VOICE_ID = "VOICE_ID_HERE";
+const GEMINI_API_KEY = "AIzaSyDFu4lZHUwMiZ87i2XMqYrx6T-I0HhfPZc";
+const ELEVENLABS_API_KEY = "sk_a9e5d4db77d0f9ed260ff3cafbbeaeb33f42a27ac3e047e3";
+const ELEVENLABS_VOICE_ID = "YXpFCvM1S3JbWEJhoskW";
 
 // --- SYSTEM ---
 const SYSTEM_PROMPT = `You are Reach. You are not a chatbot, therapist, assistant, or app feature. You are the most honest conversation this person has ever had.
