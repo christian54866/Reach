@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reach-v1';
+const CACHE_NAME = 'reach-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -33,4 +33,3 @@ self.addEventListener('fetch', event => {
       .then(response => response || fetch(event.request))
   );
 });
-
