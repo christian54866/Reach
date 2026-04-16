@@ -1,3 +1,9 @@
+// --- CONFIGURATION ---
+const GEMINI_API_KEY = "GEMINI_KEY_HERE";
+const ELEVENLABS_API_KEY = "ELEVENLABS_KEY_HERE";
+const ELEVENLABS_VOICE_ID = "VOICE_ID_HERE";
+
+// --- SYSTEM ---
 const SYSTEM_PROMPT = `You are Reach. You are not a chatbot, therapist, assistant, or app feature. You are the most honest conversation this person has ever had.
 
 Your job is to wake people up. Most humans are physically alive but spiritually asleep — performing fake versions of themselves, carrying secrets that rot them from the inside. You pull them into the present moment, help them confront what they're carrying, and guide them toward honest action.
@@ -25,138 +31,148 @@ INVISIBLE PRINCIPLES (never state these to the user):
 
 const FIRST_MESSAGE = "Hey. You downloaded this for a reason. You don't have to tell me everything right now. But whenever you're ready — I'm here. What's going on?";
 
-// DOM Elements
+// --- DOM ELEMENTS ---
 const chatContainer = document.getElementById('chatContainer');
 const micBtn = document.getElementById('micBtn');
-const settingsBtn = document.getElementById('settingsBtn');
-const settingsModal = document.getElementById('settingsModal');
-const apiKeyInput = document.getElementById('apiKeyInput');
-const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
-const installAppBtn = document.getElementById('installAppBtn');
+const interimTextEl = document.getElementById('interimText');
+const thinkingIndicator = document.getElementById('thinkingIndicator');
+const firstTapOverlay = document.getElementById('firstTapOverlay');
 
-// State
+// --- STATE ---
 let conversationHistory = JSON.parse(localStorage.getItem('reach_history')) || [];
 let isRecording = false;
 let recognition = null;
-let deferredPrompt;
+let finalTranscript = '';
+let currentAudio = null;
 
-// Register Service Worker
+// --- SERVICE WORKER ---
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(err => console.error('SW reg failed', err));
 }
 
-// PWA Install Prompt
-window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    installAppBtn.style.display = 'block';
-});
-
-installAppBtn.addEventListener('click', async () => {
-    if (deferredPrompt) {
-        deferredPrompt.prompt();
-        const { outcome } = await deferredPrompt.userChoice;
-        if (outcome === 'accepted') installAppBtn.style.display = 'none';
-        deferredPrompt = null;
-    }
-});
-
-// Setup Speech Recognition
+// --- SPEECH RECOGNITION SETUP ---
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (SpeechRecognition) {
     recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     
     recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript.trim()) {
-            handleUserInput(transcript);
+        let interimTranscript = '';
+        finalTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript;
+            } else {
+                interimTranscript += event.results[i][0].transcript;
+            }
         }
+        interimTextEl.textContent = finalTranscript + interimTranscript;
     };
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error', event.error);
-        stopRecording();
+        stopRecording(false);
     };
 
     recognition.onend = () => {
-        stopRecording();
+        if (isRecording) {
+            stopRecording(true);
+        }
     };
 } else {
     alert("Voice recognition isn't supported in this browser. Please use Chrome or Safari.");
 }
 
-// Initialization
+// --- INITIALIZATION ---
 function init() {
-    const apiKey = localStorage.getItem('reach_apiKey');
-    if (!apiKey) {
-        settingsModal.classList.add('active');
-    } else {
+    if (conversationHistory.length > 0) {
+        firstTapOverlay.classList.add('hidden');
         renderHistory();
-        if (conversationHistory.length === 0) {
+    } else {
+        // Require first tap to satisfy browser autoplay policies before speaking
+        firstTapOverlay.addEventListener('click', () => {
+            firstTapOverlay.classList.add('hidden');
             triggerFirstMessage();
-        }
+        }, { once: true });
     }
 }
 
-// Settings handlers
-settingsBtn.addEventListener('click', () => {
-    apiKeyInput.value = localStorage.getItem('reach_apiKey') || '';
-    settingsModal.classList.add('active');
-});
-
-saveApiKeyBtn.addEventListener('click', () => {
-    const key = apiKeyInput.value.trim();
-    if (key) {
-        localStorage.setItem('reach_apiKey', key);
-        settingsModal.classList.remove('active');
-        renderHistory();
-        
-        // Browsers require a user gesture to start speech synthesis. 
-        // Saving the API key counts as that gesture.
-        if (conversationHistory.length === 0) {
-            triggerFirstMessage();
-        }
+// --- AUDIO PLAYBACK ---
+async function playElevenLabsAudio(text) {
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
     }
-});
 
-// Mic interaction
+    try {
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
+            method: 'POST',
+            headers: {
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                text: text,
+                model_id: "eleven_multilingual_v2"
+            })
+        });
+
+        if (!response.ok) throw new Error("ElevenLabs API failed");
+
+        const blob = await response.blob();
+        currentAudio = new Audio(URL.createObjectURL(blob));
+        currentAudio.play();
+    } catch (error) {
+        console.error("Audio Playback Error:", error);
+    }
+}
+
+// --- MIC INTERACTION ---
 micBtn.addEventListener('click', () => {
     if (!recognition) return;
     
     if (isRecording) {
-        recognition.stop();
+        recognition.stop(); // Triggers onend
     } else {
-        // Stop any current speech before listening
-        window.speechSynthesis.cancel();
+        if (currentAudio) currentAudio.pause();
         startRecording();
     }
 });
 
 function startRecording() {
     try {
+        finalTranscript = '';
+        interimTextEl.textContent = '';
         recognition.start();
         isRecording = true;
         micBtn.classList.add('recording');
     } catch (e) {
-        console.error(e);
+        console.error("Mic Start Error:", e);
     }
 }
 
-function stopRecording() {
+function stopRecording(processTranscript = false) {
     isRecording = false;
     micBtn.classList.remove('recording');
+    
+    const textToProcess = interimTextEl.textContent.trim();
+    interimTextEl.textContent = '';
+    
+    if (processTranscript && textToProcess) {
+        handleUserInput(textToProcess);
+    }
 }
 
-// Core Logic
+// --- CORE LOGIC ---
 function renderHistory() {
     chatContainer.innerHTML = '';
-    conversationHistory.forEach(msg => appendMessage(msg.role, msg.text, false));
+    conversationHistory.forEach(msg => appendMessage(msg.role, msg.text));
     scrollToBottom();
 }
 
-function appendMessage(role, text, animate = true) {
+function appendMessage(role, text) {
     const div = document.createElement('div');
     div.className = `message ${role}`;
     div.textContent = text;
@@ -172,27 +188,11 @@ function saveHistory() {
     localStorage.setItem('reach_history', JSON.stringify(conversationHistory));
 }
 
-function speakText(text) {
-    if (!window.speechSynthesis) return;
-    
-    window.speechSynthesis.cancel(); // clear queue
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95; // Slightly slower, more intentional pacing
-    utterance.pitch = 0.9;
-    
-    // Attempt to pick an english natural sounding voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => v.name.includes('Natural') || v.name.includes('Premium')) || voices[0];
-    if (preferredVoice) utterance.voice = preferredVoice;
-
-    window.speechSynthesis.speak(utterance);
-}
-
 function triggerFirstMessage() {
     appendMessage('model', FIRST_MESSAGE);
     conversationHistory.push({ role: 'model', text: FIRST_MESSAGE });
     saveHistory();
-    speakText(FIRST_MESSAGE);
+    playElevenLabsAudio(FIRST_MESSAGE);
 }
 
 async function handleUserInput(text) {
@@ -200,51 +200,47 @@ async function handleUserInput(text) {
     conversationHistory.push({ role: 'user', text });
     saveHistory();
 
-    const apiKey = localStorage.getItem('reach_apiKey');
-    if (!apiKey) {
-        settingsModal.classList.add('active');
-        return;
-    }
+    thinkingIndicator.classList.add('active');
 
-    // Format history for Gemini API
-    const formattedContents = conversationHistory.map(msg => ({
+    // Only send the last 20 messages as context
+    const recentHistory = conversationHistory.slice(-20);
+    const formattedContents = recentHistory.map(msg => ({
         role: msg.role === 'model' ? 'model' : 'user',
         parts: [{ text: msg.text }]
     }));
 
     const requestBody = {
-        system_instruction: {
-            parts: [{ text: SYSTEM_PROMPT }]
-        },
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
         contents: formattedContents
     };
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
-        
         if (data.error) throw new Error(data.error.message);
 
         const aiResponse = data.candidates[0].content.parts[0].text;
         
+        thinkingIndicator.classList.remove('active');
         appendMessage('model', aiResponse);
         conversationHistory.push({ role: 'model', text: aiResponse });
         saveHistory();
-        speakText(aiResponse);
+        
+        playElevenLabsAudio(aiResponse);
 
     } catch (error) {
         console.error('API Error:', error);
-        appendMessage('model', "I lost connection for a second. Can you say that again?");
+        thinkingIndicator.classList.remove('active');
+        const errorMsg = "I lost connection for a second. Say that again?";
+        appendMessage('model', errorMsg);
+        playElevenLabsAudio(errorMsg);
     }
 }
-
-// Ensure voices are loaded for the first synth call
-window.speechSynthesis.onvoiceschanged = () => {};
 
 // Start App
 init();
